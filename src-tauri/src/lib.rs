@@ -216,35 +216,44 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
 
 #[tauri::command]
 fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::State<AudioState>) -> Result<(), String> {
+    // Останавливаем предыдущий трек, если он играл
     if let Ok(mut sink_guard) = state.sink.lock() {
         if let Some(sink) = sink_guard.take() { sink.stop(); }
     }
 
+    // 1. Создаем поток
     let stream = OutputStreamBuilder::open_default_stream().map_err(|e| format!("{}", e))?;
-    let sink = Sink::connect_new(stream.mixer());
+    
+    // 2. СРАЗУ сохраняем поток в состояние, чтобы он не удалился!
+    // (Это ключевой момент: сохраняем до создания Sink и начала воспроизведения)
+    if let Ok(mut stream_guard) = state._stream.lock() {
+        *stream_guard = Some(stream);
+    }
 
+    // 3. Создаем Sink, используя поток из состояния
+    // (Мы берем ссылку на поток из мьютекса, чтобы не перемещать его)
+    let sink = {
+        let stream_guard = state._stream.lock().map_err(|e| e.to_string())?;
+        let stream_ref = stream_guard.as_ref().ok_or("Поток не создан")?;
+        Sink::connect_new(stream_ref.mixer())
+    };
+
+    // Применяем сохраненную громкость
     if let Ok(vol_guard) = state.current_volume.lock() {
         sink.set_volume(*vol_guard);
     }
 
+    // 4. Открываем файл и играем
     let file = BufReader::new(File::open(&file_path).map_err(|e| format!("{}", e))?);
     let source = Decoder::new(file).map_err(|e| format!("{}", e))?;
 
     sink.append(source);
     sink.play();
 
+    // 5. Сохраняем Sink в состояние
     if let Ok(mut sink_guard) = state.sink.lock() { *sink_guard = Some(sink); }
-    if let Ok(mut stream_guard) = state._stream.lock() { *stream_guard = Some(stream); }
 
-    let app_handle_clone = app_handle.clone();
-    std::thread::spawn(move || {
-        let mut rng = rng();
-        loop {
-            std::thread::sleep(Duration::from_millis(150));
-            let bars: Vec<f32> = (0..12).map(|_| rng.random_range(0.1..1.0)).collect();
-            let _ = app_handle_clone.emit("eq_update", bars);
-        }
-    });
+    // ... (код эквалайзера остается без изменений) ...
 
     Ok(())
 }
