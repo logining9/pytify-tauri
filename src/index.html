@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyTify Tauri</title>
+    <style>
+        :root {
+            --bg: #121212; --fg: #eee; --input-bg: #333; --border: #333;
+            --accent: #1DB954; --accent-hover: #1ed760; --pause-bg: #e0e0e0; --pause-fg: #121212;
+            --select-bg: #333; --select-fg: #eee;
+        }
+        html[data-theme="light"] {
+            --bg: #f7f7f7; --fg: #111; --input-bg: #fff; --border: #ccc;
+            --accent: #1DB954; --accent-hover: #1ed760; --pause-bg: #e0e0e0; --pause-fg: #111;
+            --select-bg: #fff; --select-fg: #111;
+        }
+        html[data-theme="pink"] {
+            --bg: #1a1224; --fg: #f5e6ff; --input-bg: #261936; --border: #4a2b66;
+            --accent: #ff5fbf; --accent-hover: #ff7fcf; --pause-bg: #3a2352; --pause-fg: #f5e6ff;
+            --select-bg: #261936; --select-fg: #f5e6ff;
+        }
+
+        * { box-sizing: border-box; }
+
+        body { font-family: sans-serif; background: var(--bg); color: var(--fg); margin: 0; padding: 20px; height: 100vh; overflow: hidden; }
+        
+        .layout { display: flex; gap: 30px; max-width: 1100px; margin: 0 auto; height: 100%; }
+        
+        .left-col { flex: 1; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; padding-right: 15px; max-width: 600px; }
+        .right-col { width: 350px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+
+        input[type="text"] { width: 100%; padding: 12px; border-radius: 8px; border: none; background: var(--input-bg); color: var(--fg); font-size: 16px; outline: none; }
+        
+        button { padding: 10px; border-radius: 5px; border: none; background: var(--accent); color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: var(--accent-hover); }
+        button.pause { background: var(--pause-bg); color: var(--pause-fg); }
+        button.secondary { background: #444; }
+        
+        .section-title { font-size: 14px; color: #888; margin-top: 15px; margin-bottom: 5px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+        
+        ul { width: 100%; list-style: none; padding: 0; margin: 0; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,0.1); }
+        li { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+        li:last-child { border-bottom: none; }
+        li:hover { background: var(--input-bg); }
+        
+        .btn-remove { background: transparent; color: #ff4d4d; font-size: 16px; padding: 0 5px; border: none; cursor: pointer; }
+        .btn-remove:hover { color: #ff0000; background: transparent; }
+
+        .playlists { display: flex; gap: 15px; }
+        .playlist-col { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: rgba(0,0,0,0.1); }
+        .playlist-col h4 { margin: 0 0 8px 0; font-size: 13px; color: #888; text-align: center; }
+        .btn-add { font-size: 12px; padding: 6px; width: 100%; margin-top: 8px; background: #444; }
+        
+        .controls-row { display: flex; gap: 10px; align-items: center; width: 100%; }
+        .volume-slider { flex: 1; accent-color: var(--accent); }
+        
+        .theme-select { padding: 6px 10px; border-radius: 6px; background: var(--select-bg); color: var(--select-fg); border: 1px solid var(--border); font-size: 14px; cursor: pointer; outline: none; }
+        .theme-select option { background: var(--select-bg); color: var(--select-fg); }
+
+        /* Винил и эквалайзер */
+        .vinyl-container { width: 260px; height: 260px; margin-bottom: 30px; position: relative; display: flex; justify-content: center; align-items: center; }
+        
+        .vinyl {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 50%;
+            background: radial-gradient(circle, #111 30%, #333 31%, #111 32%, #222 33%, #111 34%, #222 35%, #111 40%, #222 45%, #111 50%, #222 55%, #111 60%, #222 65%, #111 70%, #222 75%, #111 80%, #222 85%, #111 90%, #000 100%);
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+        }
+        
+        .vinyl-label {
+            position: absolute; width: 120px; height: 120px; border-radius: 50%;
+            background-color: var(--accent);
+            box-shadow: inset 0 0 15px rgba(0,0,0,0.6);
+            border: 2px solid #fff;
+            z-index: 3;
+            display: flex; justify-content: center; align-items: center;
+        }
+        
+        .vinyl-label::after {
+            content: ''; position: absolute; width: 10px; height: 10px; border-radius: 50%;
+            background-color: var(--bg); z-index: 4;
+        }
+
+        #vinyl-eq-canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        .vinyl.playing { animation: spin 4s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        .now-playing-title {
+            font-size: 22px; font-weight: bold; text-align: center; margin-top: 10px; line-height: 1.4;
+            max-width: 100%; word-wrap: break-word;
+        }
+        .now-playing-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+        
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <div class="left-col">
+            <h2 style="margin-top: 0;">🎵 PyTify</h2>
+            <input type="text" id="search-input" placeholder="Ссылка YouTube или название трека..." />
+            
+            <div class="controls-row">
+                <button id="btn-prev" class="secondary" style="flex: 1;">⏮</button>
+                <button id="btn-play" style="flex: 3;">▶ Слушать (поток)</button>
+                <button id="btn-next" class="secondary" style="flex: 1;">⏭</button>
+            </div>
+            <div class="controls-row">
+                <button id="btn-download" class="secondary" style="flex: 1;">⬇ Скачать</button>
+                <button id="btn-pause" class="pause" style="flex: 2;">⏸ Пауза</button>
+            </div>
+
+            <div class="controls-row" style="margin-top: 5px;">
+                <span>🔊</span>
+                <input type="range" id="volume-slider" min="0" max="100" value="100" class="volume-slider">
+                <select id="theme-select" class="theme-select">
+                    <option value="dark">Тёмная</option>
+                    <option value="light">Светлая</option>
+                    <option value="pink">Розовая</option>
+                </select>
+            </div>
+
+            <div class="section-title">История</div>
+            <ul id="history-list"></ul>
+
+            <div class="section-title">Плейлисты</div>
+            <div class="playlists" id="playlists-container"></div>
+        </div>
+
+        <div class="right-col">
+            <div class="vinyl-container">
+                <div class="vinyl" id="vinyl-disc"></div>
+                <canvas id="vinyl-eq-canvas" width="260" height="260"></canvas>
+                <div class="vinyl-label"></div>
+            </div>
+            <div class="now-playing-label">Сейчас играет</div>
+            <div class="now-playing-title" id="now-playing-title">Ничего не играет</div>
+        </div>
+    </div>
+    
+    <script src="main.js"></script>
+</body>
+</html>
