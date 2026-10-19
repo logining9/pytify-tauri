@@ -1,12 +1,14 @@
 use std::process::Command;
-use tauri::{Manager, Emitter};
+use tauri::Manager;
 use rodio::{Decoder, OutputStreamBuilder, Sink};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Mutex;
-use std::time::Duration;
-use rand::{RngExt, rng};
 use serde::Serialize;
+use std::env;
+use std::path::PathBuf;
+use std::fs;
+use std::io::Write;
 
 #[derive(Serialize)]
 struct AudioInfo {
@@ -163,7 +165,6 @@ fn get_downloaded_tracks(app_handle: tauri::AppHandle) -> Result<Vec<DownloadedT
             }
         }
     }
-    // Сортируем по алфавиту
     tracks.sort_by(|a, b| a.title.cmp(&b.title));
     Ok(tracks)
 }
@@ -215,7 +216,7 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
 }
 
 #[tauri::command]
-fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::State<AudioState>) -> Result<(), String> {
+fn play_audio(file_path: String, state: tauri::State<AudioState>) -> Result<(), String> {
     // Останавливаем предыдущий трек, если он играл
     if let Ok(mut sink_guard) = state.sink.lock() {
         if let Some(sink) = sink_guard.take() { sink.stop(); }
@@ -225,13 +226,11 @@ fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::Sta
     let stream = OutputStreamBuilder::open_default_stream().map_err(|e| format!("{}", e))?;
     
     // 2. СРАЗУ сохраняем поток в состояние, чтобы он не удалился!
-    // (Это ключевой момент: сохраняем до создания Sink и начала воспроизведения)
     if let Ok(mut stream_guard) = state._stream.lock() {
         *stream_guard = Some(stream);
     }
 
     // 3. Создаем Sink, используя поток из состояния
-    // (Мы берем ссылку на поток из мьютекса, чтобы не перемещать его)
     let sink = {
         let stream_guard = state._stream.lock().map_err(|e| e.to_string())?;
         let stream_ref = stream_guard.as_ref().ok_or("Поток не создан")?;
@@ -252,8 +251,6 @@ fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::Sta
 
     // 5. Сохраняем Sink в состояние
     if let Ok(mut sink_guard) = state.sink.lock() { *sink_guard = Some(sink); }
-
-    // ... (код эквалайзера остается без изменений) ...
 
     Ok(())
 }
@@ -286,8 +283,63 @@ fn is_playing(state: tauri::State<AudioState>) -> bool {
     false
 }
 
+fn integrate_appimage() {
+    let appimage_path = match env::var("APPIMAGE") {
+        Ok(path) => path,
+        Err(_) => return, 
+    };
+
+    let home = match env::var("HOME") {
+        Ok(h) => PathBuf::from(h),
+        Err(_) => return,
+    };
+
+    let apps_dir = home.join(".local/share/applications");
+    let icons_dir = home.join(".local/share/icons/hicolor/128x128/apps");
+
+    let _ = fs::create_dir_all(&apps_dir);
+    let _ = fs::create_dir_all(&icons_dir);
+
+    if let Ok(appdir) = env::var("APPDIR") {
+        let icon_src = PathBuf::from(appdir).join("usr/share/icons/hicolor/128x128/apps/pytify.png");
+        let icon_dest = icons_dir.join("pytify.png");
+        if icon_src.exists() {
+            let _ = fs::copy(&icon_src, &icon_dest);
+        }
+    }
+
+    let desktop_path = apps_dir.join("pytify.desktop");
+    let desktop_content = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=PyTify\n\
+         Comment=YouTube/Spotify Music Player\n\
+         Exec={} %U\n\
+         Icon=pytify\n\
+         Terminal=false\n\
+         Categories=AudioVideo;Audio;Player;\n\
+         StartupWMClass=pytify-tauri\n",
+        appimage_path
+    );
+
+    if let Ok(mut file) = fs::File::create(&desktop_path) {
+        let _ = file.write_all(desktop_content.as_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&desktop_path, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    let _ = std::process::Command::new("update-desktop-database")
+        .arg(&apps_dir)
+        .status();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    integrate_appimage();
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
