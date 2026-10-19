@@ -9,12 +9,15 @@
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      {
-        "title": "pytify-tauri",
-        "width": 1100,
-        "height": 750
-      }
-    ],
+  {
+    "title": "pytify-tauri",
+    "width": 1100,
+    "height": 750,
+    "resizable": true,
+    "fullscreen": false,
+    "devtools": true
+  }
+],
     "security": {
       "csp": null
     }
