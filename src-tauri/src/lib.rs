@@ -1,4 +1,3 @@
-use std::process::Command;
 use tauri::Manager;
 use rodio::{Decoder, OutputStreamBuilder, Sink};
 use std::fs::File;
@@ -9,6 +8,7 @@ use std::env;
 use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize)]
 struct AudioInfo {
@@ -29,13 +29,18 @@ struct AudioState {
     current_volume: Mutex<f32>,
 }
 
-fn get_radio_track(current_id: &str, direction: i32) -> Result<String, String> {
+// Вспомогательная функция для получения команды yt-dlp (sidecar)
+fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell::process::Command, String> {
+    app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
+}
+
+// Все функции теперь принимают app_handle и используют sidecar
+async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::AppHandle) -> Result<String, String> {
     let radio_url = format!("https://www.youtube.com/watch?v={}&list=RD{}", current_id, current_id);
-    let output = Command::new("/usr/bin/yt-dlp")
-        .arg("--extractor-args").arg("youtube:player_client=tv,mweb")
-        .arg("--flat-playlist").arg("--print").arg("id")
-        .arg(&radio_url)
+    let output = get_ytdlp_command(app_handle)?
+        .args(["--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &radio_url])
         .output()
+        .await
         .map_err(|e| format!("Ошибка получения радио: {}", e))?;
 
     if !output.status.success() {
@@ -59,25 +64,27 @@ fn get_radio_track(current_id: &str, direction: i32) -> Result<String, String> {
     }
 }
 
-async fn download_by_id(video_id: &str, temp_dir: &std::path::Path) -> Result<(String, String), String> {
+async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: &tauri::AppHandle) -> Result<(String, String), String> {
     let url = format!("https://www.youtube.com/watch?v={}", video_id);
     
-    let title_output = Command::new("/usr/bin/yt-dlp")
-        .arg("--extractor-args").arg("youtube:player_client=tv,mweb")
-        .arg("--print").arg("title")
-        .arg(&url)
+    let title_output = get_ytdlp_command(app_handle)?
+        .args(["--extractor-args", "youtube:player_client=tv,mweb", "--print", "title", &url])
         .output()
+        .await
         .map_err(|e| format!("Ошибка получения названия: {}", e))?;
     
     let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
 
-    let output = Command::new("/usr/bin/yt-dlp")
-        .arg("--extractor-args").arg("youtube:player_client=tv,mweb")
-        .arg("-x").arg("--audio-format").arg("mp3").arg("--audio-quality").arg("0")
-        .arg("--embed-metadata")
-        .arg("-o").arg(format!("{}/%(title)s.%(ext)s", temp_dir.display()))
-        .arg(&url)
+    let output = get_ytdlp_command(app_handle)?
+        .args([
+            "--extractor-args", "youtube:player_client=tv,mweb",
+            "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "--embed-metadata",
+            "-o", &format!("{}/%(title)s.%(ext)s", temp_dir.display()),
+            &url
+        ])
         .output()
+        .await
         .map_err(|e| format!("Ошибка yt-dlp: {}", e))?;
 
     if !output.status.success() {
@@ -114,13 +121,16 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
 
     let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
 
-    let output = Command::new("/usr/bin/yt-dlp")
-        .arg("--extractor-args").arg("youtube:player_client=tv,mweb")
-        .arg("-x").arg("--audio-format").arg("mp3").arg("--audio-quality").arg("0")
-        .arg("--embed-metadata").arg("--embed-thumbnail")
-        .arg("-o").arg(format!("{}/%(title)s.%(ext)s", output_dir.display()))
-        .arg(&url)
+    let output = get_ytdlp_command(&app_handle)?
+        .args([
+            "--extractor-args", "youtube:player_client=tv,mweb",
+            "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "--embed-metadata", "--embed-thumbnail",
+            "-o", &format!("{}/%(title)s.%(ext)s", output_dir.display()),
+            &url
+        ])
         .output()
+        .await
         .map_err(|e| format!("Не удалось запустить yt-dlp: {}", e))?;
 
     if !output.status.success() {
@@ -184,14 +194,13 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     let mut final_video_id = String::new();
 
     if let (Some(r_id), Some(dir)) = (radio_id, direction) {
-        final_video_id = get_radio_track(&r_id, dir)?;
+        final_video_id = get_radio_track(&r_id, dir, &app_handle).await?;
     } else {
         let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
-        let id_output = Command::new("/usr/bin/yt-dlp")
-            .arg("--extractor-args").arg("youtube:player_client=tv,mweb")
-            .arg("--flat-playlist").arg("--print").arg("id")
-            .arg(&url)
+        let id_output = get_ytdlp_command(&app_handle)?
+            .args(["--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &url])
             .output()
+            .await
             .map_err(|e| format!("Ошибка получения ID: {}", e))?;
         
         if id_output.status.success() {
@@ -206,7 +215,7 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
         return Err("Не удалось определить ID видео".to_string());
     }
 
-    let (path, title) = download_by_id(&final_video_id, &temp_dir).await?;
+    let (path, title) = download_by_id(&final_video_id, &temp_dir, &app_handle).await?;
 
     Ok(AudioInfo {
         path,
@@ -215,43 +224,25 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     })
 }
 
+// play_audio, toggle_playback, set_volume, is_playing остаются БЕЗ ИЗМЕНЕНИЙ (они не используют yt-dlp)
 #[tauri::command]
 fn play_audio(file_path: String, state: tauri::State<AudioState>) -> Result<(), String> {
-    // Останавливаем предыдущий трек, если он играл
     if let Ok(mut sink_guard) = state.sink.lock() {
         if let Some(sink) = sink_guard.take() { sink.stop(); }
     }
-
-    // 1. Создаем поток
     let stream = OutputStreamBuilder::open_default_stream().map_err(|e| format!("{}", e))?;
-    
-    // 2. СРАЗУ сохраняем поток в состояние, чтобы он не удалился!
-    if let Ok(mut stream_guard) = state._stream.lock() {
-        *stream_guard = Some(stream);
-    }
-
-    // 3. Создаем Sink, используя поток из состояния
+    if let Ok(mut stream_guard) = state._stream.lock() { *stream_guard = Some(stream); }
     let sink = {
         let stream_guard = state._stream.lock().map_err(|e| e.to_string())?;
         let stream_ref = stream_guard.as_ref().ok_or("Поток не создан")?;
         Sink::connect_new(stream_ref.mixer())
     };
-
-    // Применяем сохраненную громкость
-    if let Ok(vol_guard) = state.current_volume.lock() {
-        sink.set_volume(*vol_guard);
-    }
-
-    // 4. Открываем файл и играем
+    if let Ok(vol_guard) = state.current_volume.lock() { sink.set_volume(*vol_guard); }
     let file = BufReader::new(File::open(&file_path).map_err(|e| format!("{}", e))?);
     let source = Decoder::new(file).map_err(|e| format!("{}", e))?;
-
     sink.append(source);
     sink.play();
-
-    // 5. Сохраняем Sink в состояние
     if let Ok(mut sink_guard) = state.sink.lock() { *sink_guard = Some(sink); }
-
     Ok(())
 }
 
@@ -284,44 +275,22 @@ fn is_playing(state: tauri::State<AudioState>) -> bool {
 }
 
 fn integrate_appimage() {
-    let appimage_path = match env::var("APPIMAGE") {
-        Ok(path) => path,
-        Err(_) => return, 
-    };
-
-    let home = match env::var("HOME") {
-        Ok(h) => PathBuf::from(h),
-        Err(_) => return,
-    };
-
+    let appimage_path = match env::var("APPIMAGE") { Ok(path) => path, Err(_) => return };
+    let home = match env::var("HOME") { Ok(h) => PathBuf::from(h), Err(_) => return };
     let apps_dir = home.join(".local/share/applications");
     let icons_dir = home.join(".local/share/icons/hicolor/128x128/apps");
-
     let _ = fs::create_dir_all(&apps_dir);
     let _ = fs::create_dir_all(&icons_dir);
-
     if let Ok(appdir) = env::var("APPDIR") {
         let icon_src = PathBuf::from(appdir).join("usr/share/icons/hicolor/128x128/apps/pytify.png");
         let icon_dest = icons_dir.join("pytify.png");
-        if icon_src.exists() {
-            let _ = fs::copy(&icon_src, &icon_dest);
-        }
+        if icon_src.exists() { let _ = fs::copy(&icon_src, &icon_dest); }
     }
-
     let desktop_path = apps_dir.join("pytify.desktop");
     let desktop_content = format!(
-        "[Desktop Entry]\n\
-         Type=Application\n\
-         Name=PyTify\n\
-         Comment=YouTube/Spotify Music Player\n\
-         Exec={} %U\n\
-         Icon=pytify\n\
-         Terminal=false\n\
-         Categories=AudioVideo;Audio;Player;\n\
-         StartupWMClass=pytify-tauri\n",
+        "[Desktop Entry]\nType=Application\nName=PyTify\nComment=YouTube/Spotify Music Player\nExec={} %U\nIcon=pytify\nTerminal=false\nCategories=AudioVideo;Audio;Player;\nStartupWMClass=pytify-tauri\n",
         appimage_path
     );
-
     if let Ok(mut file) = fs::File::create(&desktop_path) {
         let _ = file.write_all(desktop_content.as_bytes());
         #[cfg(unix)]
@@ -330,10 +299,7 @@ fn integrate_appimage() {
             let _ = fs::set_permissions(&desktop_path, fs::Permissions::from_mode(0o755));
         }
     }
-
-    let _ = std::process::Command::new("update-desktop-database")
-        .arg(&apps_dir)
-        .status();
+    let _ = std::process::Command::new("update-desktop-database").arg(&apps_dir).status();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -343,6 +309,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_shell::init()) // <-- Важно: инициализация плагина shell
         .manage(AudioState { 
             sink: Mutex::new(None), 
             _stream: Mutex::new(None),

@@ -20,6 +20,9 @@
     }
   },
   "bundle": {
+    "externalBin": [
+      "binaries/yt-dlp"
+    ],
     "active": true,
     "targets": "all",
     "icon": [
