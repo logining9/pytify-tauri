@@ -35,11 +35,22 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
 }
 
 // Теперь возвращает Result<Vec<String>, String> и требует app_handle
-fn get_common_args(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
-    let deno_path = app_handle
-        .path()
-        .resolve("binaries/deno", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| format!("Не удалось найти Deno: {}", e))?;
+fn get_common_args(_app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
+    // Получаем путь к текущему исполняемому файлу (pytify-tauri)
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Не удалось получить путь к exe: {}", e))?;
+    
+    // Берём папку, где лежит exe (в AppImage это usr/bin/)
+    let exe_dir = exe_path.parent()
+        .ok_or("Не удалось получить родительскую папку exe")?;
+    
+    // Формируем путь к Deno в той же папке
+    let deno_path = exe_dir.join("deno");
+    
+    // Проверяем, существует ли файл (для отладки)
+    if !deno_path.exists() {
+        return Err(format!("Deno не найден по пути: {}", deno_path.display()));
+    }
 
     let deno_arg = format!("deno:{}", deno_path.display());
 
