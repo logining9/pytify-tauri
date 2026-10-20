@@ -36,7 +36,7 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
 
 fn get_common_args(_app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
     Ok(vec![
-        "--js-runtimes".to_string(), "deno".to_string(),
+        "--js-runtimes".to_string(), "deno:/usr/bin/deno".to_string(), // <-- Полный путь
         "--remote-components".to_string(), "ejs:github".to_string(),
         "--extractor-args".to_string(), "youtube:player_client=web".to_string(),
     ])
