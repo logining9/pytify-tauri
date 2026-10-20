@@ -90,11 +90,13 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
     let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
 
     // 2. Скачиваем аудио (ЗДЕСЬ ТОЖЕ ДОБАВЛЕНЫ АРГУМЕНТЫ DENO/EJS)
+    // 2. Скачиваем аудио
+    let output_template = format!("{}/%(title)s.%(ext)s", temp_dir.display()); // <-- Создаем строку заранее
     let mut dl_args = get_common_args();
     dl_args.extend(vec![
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--embed-metadata",
-        "-o", &format!("{}/%(title)s.%(ext)s", temp_dir.display()),
+        "-o", &output_template, // <-- Передаем ссылку на переменную
         &url
     ]);
 
@@ -138,14 +140,15 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
 
     let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
 
+        let output_template = format!("{}/%(title)s.%(ext)s", output_dir.display()); // <-- Создаем строку заранее
     let mut args = get_common_args();
     args.extend(vec![
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--embed-metadata", "--embed-thumbnail",
-        "-o", &format!("{}/%(title)s.%(ext)s", output_dir.display()),
+        "-o", &output_template, // <-- Передаем ссылку на переменную
         &url
     ]);
-
+    
     let output = get_ytdlp_command(&app_handle)?
         .args(&args)
         .output()
