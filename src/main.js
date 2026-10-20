@@ -11,27 +11,29 @@ const themeSelect = document.getElementById('theme-select');
 const vinylDisc = document.getElementById('vinyl-disc');
 const nowPlayingTitle = document.getElementById('now-playing-title');
 
+// Для кругового эквалайзера
 const vinylEqCanvas = document.getElementById('vinyl-eq-canvas');
 const eqCtx = vinylEqCanvas.getContext('2d');
 let eqBars = new Array(36).fill(0.1);
 
 let store;
 let history = []; 
-let playlists = [[], []]; // Теперь 2 плейлиста: 0 и 1
-let downloadedTracks = []; // Скачанные песни
+let playlists = [[], []]; // 0 и 1 плейлисты, 2 - скачанные
+let downloadedTracks = []; 
 let isUserPaused = false;
 let isAutoPlaying = false;
 let currentHistoryIndex = -1;
 
 // Контекст воспроизведения
-let activePlaylistIndex = -1; // -1 (не плейлист), 0, 1 (плейлисты), 2 (скачанные)
+let activePlaylistIndex = -1; 
 let activePlaylistTrackIndex = -1;
 
+// --- Инициализация Store ---
 async function initStore() {
     store = await window.__TAURI__.store.load('pytify-data.json', { autoSave: true });
     history = await store.get('history') || [];
     
-    // Если в Store был старый формат с 3 плейлистами, обрезаем до 2
+    // Обрезаем до 2 плейлистов (если в старом формате было 3)
     let savedPlaylists = await store.get('playlists') || [[], [], []];
     playlists = [savedPlaylists[0] || [], savedPlaylists[1] || []];
 
@@ -51,7 +53,6 @@ async function initStore() {
 async function loadDownloadedTracks() {
     try {
         downloadedTracks = await window.__TAURI__.core.invoke('get_downloaded_tracks');
-        // Добавляем в конец массив плейлистов (индекс 2)
         playlists[2] = downloadedTracks.map(t => ({ 
             query: t.path, // Для локальных файлов query - это путь
             title: t.title,
@@ -64,6 +65,7 @@ async function loadDownloadedTracks() {
 
 initStore();
 
+// --- Громкость и темы ---
 async function applyVolume(vol) {
     try { await window.__TAURI__.core.invoke('set_volume', { volume: vol }); } catch (e) { console.error(e); }
 }
@@ -87,8 +89,7 @@ function setPlayingState(isPlaying) {
     }
 }
 
-// Универсальная функция для игры. 
-// track.isLocal === true означает, что query - это путь к файлу, и yt-dlp не нужен.
+// --- Универсальная функция воспроизведения ---
 async function playTrack(track, updateHistory = true, plIdx = -1, trackIdx = -1) {
     isUserPaused = false;
     btnPlay.textContent = "⏳ Загрузка...";
@@ -101,16 +102,19 @@ async function playTrack(track, updateHistory = true, plIdx = -1, trackIdx = -1)
         let path, title, videoId;
         
         if (track.isLocal) {
-            // Если это локальный файл, просто играем
+            // Локальный файл
             path = track.query;
             title = track.title;
             videoId = null;
             await window.__TAURI__.core.invoke('play_audio', { filePath: path });
         } else {
-            // Иначе ищем в сети
+            // Поиск в сети
             const args = { query: track.query || "" };
             const info = await window.__TAURI__.core.invoke('stream_audio', args);
+            
+            // ВАЖНО: теперь Rust сам управляет app_handle, передавать его не нужно
             await window.__TAURI__.core.invoke('play_audio', { filePath: info.path });
+            
             path = info.path;
             title = info.title || track.query || "Рекомендация";
             videoId = info.video_id;
@@ -136,7 +140,6 @@ async function playTrack(track, updateHistory = true, plIdx = -1, trackIdx = -1)
             await store.set('history', history);
             renderHistory();
         } else if (updateHistory && !videoId) {
-            // Локальный файл - сохраняем как локальный
             history = history.filter(h => h.query !== track.query);
             history.unshift({ query: track.query, title, videoId: null, isLocal: true, timestamp: Date.now() });
             history = history.slice(0, 25);
@@ -178,7 +181,6 @@ async function removeFromPlaylist(plIdx, itemIdx) {
 function renderPlaylists() {
     playlistsContainer.innerHTML = '';
     
-    // Рендерим все 3 колонки (0, 1 и Скачанные)
     const labels = ["Плейлист 1", "Плейлист 2", "Скачанные"];
     
     labels.forEach((label, idx) => {
@@ -237,6 +239,7 @@ function renderPlaylists() {
     });
 }
 
+// --- Слушатели событий ---
 btnPlay.addEventListener('click', () => {
     playTrack({ query: input.value.trim(), title: input.value.trim(), isLocal: false }, true);
 });
@@ -268,7 +271,7 @@ btnPause.addEventListener('click', async () => {
 
 // Умное переключение треков
 async function playNextSmart(direction) {
-    // Если мы в контексте плейлиста (или скачанных)
+    // Контекст плейлиста (1 или 2)
     if (activePlaylistIndex !== -1 && activePlaylistIndex !== 2) {
         const pl = playlists[activePlaylistIndex];
         if (pl.length > 0) {
@@ -282,7 +285,7 @@ async function playNextSmart(direction) {
         }
     }
     
-    // Если мы в скачанных (или плейлист пуст)
+    // Контекст скачанных
     if (activePlaylistIndex === 2) {
         const pl = playlists[2];
         if (pl.length > 0) {
@@ -300,20 +303,16 @@ async function playNextSmart(direction) {
     if (history.length > 0 && currentHistoryIndex !== -1) {
         const currentVideoId = history[currentHistoryIndex].videoId;
         if (currentVideoId && !history[currentHistoryIndex].isLocal) {
-            // Ищем рекомендации
             const args = { query: "", radioId: currentVideoId, direction: direction };
             try {
                 const info = await window.__TAURI__.core.invoke('stream_audio', args);
                 await window.__TAURI__.core.invoke('play_audio', { filePath: info.path });
                 nowPlayingTitle.textContent = info.title;
                 setPlayingState(true);
-                
-                // Не добавляем в историю, чтобы не зациклиться
             } catch(e) {
                 console.error("Ошибка радио:", e);
             }
         } else {
-            // Если локальный, просто листаем историю
             let nextIdx = currentHistoryIndex + direction;
             if (nextIdx >= history.length) nextIdx = 0;
             if (nextIdx < 0) nextIdx = history.length - 1;
@@ -380,10 +379,7 @@ setInterval(async () => {
     if (btnPlay.disabled || btnDownload.disabled) return;
     
     // Если играет плейлист или скачанные, не вмешиваемся
-    if (activePlaylistIndex !== -1) {
-        return; 
-    }
-
+    if (activePlaylistIndex !== -1) return; 
     if (currentHistoryIndex === -1) return;
 
     try {

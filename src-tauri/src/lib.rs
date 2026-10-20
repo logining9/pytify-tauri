@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 use rodio::{Decoder, OutputStreamBuilder, Sink};
 use std::fs::File;
 use std::io::BufReader;
@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
 use tauri_plugin_shell::ShellExt;
+use rand::RngExt; // <-- Возвращено для эквалайзера
 
 #[derive(Serialize)]
 struct AudioInfo {
@@ -33,7 +34,7 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
     app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
 }
 
-// Общие аргументы для всех вызовов yt-dlp (Deno + EJS + клиенты tv,web)
+// Общие аргументы для всех вызовов yt-dlp
 fn get_common_args() -> Vec<&'static str> {
     vec![
         "--js-runtimes", "deno:/usr/bin/deno",
@@ -44,6 +45,10 @@ fn get_common_args() -> Vec<&'static str> {
 
 async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::AppHandle) -> Result<String, String> {
     let radio_url = format!("https://www.youtube.com/watch?v={}&list=RD{}", current_id, current_id);
+    
+    let output_template = format!("{}/%(title)s.%(ext)s", "/tmp"); // Заглушка, для --print не нужна, но на всякий случай
+    let _ = output_template;
+
     let mut args = get_common_args();
     args.extend(vec!["--flat-playlist", "--print", "id", &radio_url]);
 
@@ -89,14 +94,13 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
     
     let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
 
-    // 2. Скачиваем аудио (ЗДЕСЬ ТОЖЕ ДОБАВЛЕНЫ АРГУМЕНТЫ DENO/EJS)
-    // 2. Скачиваем аудио
-    let output_template = format!("{}/%(title)s.%(ext)s", temp_dir.display()); // <-- Создаем строку заранее
+    // 2. Скачиваем аудио (исправлена ошибка с format!)
+    let output_template = format!("{}/%(title)s.%(ext)s", temp_dir.display());
     let mut dl_args = get_common_args();
     dl_args.extend(vec![
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--embed-metadata",
-        "-o", &output_template, // <-- Передаем ссылку на переменную
+        "-o", &output_template, // Передаем ссылку на переменную
         &url
     ]);
 
@@ -140,15 +144,15 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
 
     let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
 
-        let output_template = format!("{}/%(title)s.%(ext)s", output_dir.display()); // <-- Создаем строку заранее
+    let output_template = format!("{}/%(title)s.%(ext)s", output_dir.display());
     let mut args = get_common_args();
     args.extend(vec![
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--embed-metadata", "--embed-thumbnail",
-        "-o", &output_template, // <-- Передаем ссылку на переменную
+        "-o", &output_template,
         &url
     ]);
-    
+
     let output = get_ytdlp_command(&app_handle)?
         .args(&args)
         .output()
@@ -250,8 +254,9 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     })
 }
 
+// play_audio снова принимает app_handle для эквалайзера
 #[tauri::command]
-fn play_audio(file_path: String, state: tauri::State<AudioState>) -> Result<(), String> {
+fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::State<AudioState>) -> Result<(), String> {
     if let Ok(mut sink_guard) = state.sink.lock() {
         if let Some(sink) = sink_guard.take() { sink.stop(); }
     }
@@ -268,6 +273,18 @@ fn play_audio(file_path: String, state: tauri::State<AudioState>) -> Result<(), 
     sink.append(source);
     sink.play();
     if let Ok(mut sink_guard) = state.sink.lock() { *sink_guard = Some(sink); }
+
+    // --- ВОЗВРАЩАЕМ ЭКВАЛАЙЗЕР ---
+    let app_handle_clone = app_handle.clone();
+    std::thread::spawn(move || {
+        let mut rng = rand::rng();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let bars: Vec<f32> = (0..12).map(|_| rng.random_range(0.1..1.0)).collect();
+            let _ = app_handle_clone.emit("eq_update", bars);
+        }
+    });
+
     Ok(())
 }
 
