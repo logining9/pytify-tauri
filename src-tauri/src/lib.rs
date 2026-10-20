@@ -34,52 +34,9 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
     app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
 }
 
-// Умный поиск пути к Deno
-fn get_deno_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
-    // 1. Пытаемся получить путь через сам Tauri
-    if let Ok(cmd) = app_handle.shell().sidecar("deno") {
-        // Внутри tauri-plugin-shell путь хранится в поле program
-        // (это не публичное API, но работает для получения строки)
-        // Более надежный способ - использовать resolve, но с проверкой разных имен.
-    }
-
-    // 2. Fallback: ищем рядом с исполняемым файлом
-    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_dir = exe_path.parent().ok_or("Нет родительской папки")?;
-    
-    let possible_names = ["deno", "deno-x86_64-unknown-linux-gnu"];
-    for name in possible_names {
-        let candidate = exe_dir.join(name);
-        if candidate.exists() {
-            return Ok(candidate.to_string_lossy().to_string());
-        }
-    }
-    
-    // 3. Крайний случай: ищем в PATH (для локальной разработки)
-    if let Ok(path) = which::which("deno") {
-        return Ok(path.to_string_lossy().to_string());
-    }
-
-    Err("Deno не найден. Убедитесь, что он добавлен в externalBin и находится в папке binaries.".to_string())
-}
-
 fn get_common_args(_app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
-    // Получаем путь к текущему исполняемому файлу
-    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_dir = exe_path.parent().ok_or("Нет родительской папки")?;
-    
-    // Внутри AppImage Tauri переименовывает sidecar в простое имя "deno"
-    let deno_path = exe_dir.join("deno");
-    
-    if !deno_path.exists() {
-        return Err(format!("Deno не найден по пути: {}", deno_path.display()));
-    }
-
-    // Формат, который сработал в вашем тесте: "deno:путь"
-    let deno_arg = format!("deno:{}", deno_path.display());
-
     Ok(vec![
-        "--js-runtimes".to_string(), deno_arg,
+        "--js-runtimes".to_string(), "deno".to_string(),
         "--remote-components".to_string(), "ejs:github".to_string(),
         "--extractor-args".to_string(), "youtube:player_client=web".to_string(),
     ])
