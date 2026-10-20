@@ -37,9 +37,9 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
 // Общие аргументы для всех вызовов yt-dlp
 fn get_common_args() -> Vec<&'static str> {
     vec![
-        "--js-runtimes", "deno:/usr/bin/deno",
+        "--js-runtimes", "deno",
         "--remote-components", "ejs:github",
-        "--extractor-args", "youtube:player_client=tv,web", // Убрали mweb
+        "--extractor-args", "youtube:player_client=web", // Убрали mweb
     ]
 }
 

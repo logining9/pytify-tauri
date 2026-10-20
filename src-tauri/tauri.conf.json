@@ -24,7 +24,8 @@
   },
   "bundle": {
     "externalBin": [
-      "binaries/yt-dlp"
+      "binaries/yt-dlp",
+      "binaries/deno"
     ],
     "active": true,
     "targets": "all",
