@@ -63,9 +63,20 @@ fn get_deno_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
     Err("Deno не найден. Убедитесь, что он добавлен в externalBin и находится в папке binaries.".to_string())
 }
 
-fn get_common_args(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
-    let deno_path = get_deno_path(app_handle)?;
-    let deno_arg = format!("deno:{}", deno_path);
+fn get_common_args(_app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
+    // Получаем путь к текущему исполняемому файлу
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = exe_path.parent().ok_or("Нет родительской папки")?;
+    
+    // Внутри AppImage Tauri переименовывает sidecar в простое имя "deno"
+    let deno_path = exe_dir.join("deno");
+    
+    if !deno_path.exists() {
+        return Err(format!("Deno не найден по пути: {}", deno_path.display()));
+    }
+
+    // Формат, который сработал в вашем тесте: "deno:путь"
+    let deno_arg = format!("deno:{}", deno_path.display());
 
     Ok(vec![
         "--js-runtimes".to_string(), deno_arg,
