@@ -38,7 +38,7 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
 async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::AppHandle) -> Result<String, String> {
     let radio_url = format!("https://www.youtube.com/watch?v={}&list=RD{}", current_id, current_id);
     let output = get_ytdlp_command(app_handle)?
-        .args(["--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &radio_url])
+        .args(["--js-runtimes", "deno", "--remote-components", "ejs:github", "--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &radio_url])
         .output()
         .await
         .map_err(|e| format!("Ошибка получения радио: {}", e))?;
@@ -68,7 +68,7 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
     let url = format!("https://www.youtube.com/watch?v={}", video_id);
     
     let title_output = get_ytdlp_command(app_handle)?
-        .args(["--extractor-args", "youtube:player_client=tv,mweb", "--print", "title", &url])
+        .args(["--js-runtimes", "deno", "--remote-components", "ejs:github", "--extractor-args", "youtube:player_client=tv,mweb", "--print", "title", &url])
         .output()
         .await
         .map_err(|e| format!("Ошибка получения названия: {}", e))?;
@@ -123,6 +123,8 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
 
     let output = get_ytdlp_command(&app_handle)?
         .args([
+            "--js-runtimes", "deno", 
+            "--remote-components", "ejs:github", 
             "--extractor-args", "youtube:player_client=tv,mweb",
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--embed-metadata", "--embed-thumbnail",
@@ -198,7 +200,7 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     } else {
         let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
         let id_output = get_ytdlp_command(&app_handle)?
-            .args(["--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &url])
+            .args(["--js-runtimes", "deno", "--remote-components", "ejs:github", "--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &url])
             .output()
             .await
             .map_err(|e| format!("Ошибка получения ID: {}", e))?;

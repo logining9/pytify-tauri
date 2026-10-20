@@ -22,23 +22,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 1. Устанавливаем системные зависимости для Linux (включая ALSA)
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
-          
+
+      # 2. Устанавливаем Deno (нужен для решения YouTube challenge)
+      - name: Install Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v2.x
+
+      # 3. Устанавливаем Node.js
       - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
+      # 4. Устанавливаем Rust
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      # 5. Устанавливаем зависимости фронтенда
       - name: install frontend dependencies
         run: npm install
 
+      # 6. Запускаем сборку Tauri
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
