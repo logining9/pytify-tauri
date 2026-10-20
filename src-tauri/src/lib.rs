@@ -34,13 +34,22 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
     app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
 }
 
-// Общие аргументы для всех вызовов yt-dlp
-fn get_common_args() -> Vec<&'static str> {
-    vec![
-        "--js-runtimes", "deno",
-        "--remote-components", "ejs:github",
-        "--extractor-args", "youtube:player_client=web", // Убрали mweb
-    ]
+// Замените старую get_common_args на эту:
+fn get_common_args(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
+    // Получаем путь к нашему sidecar-бинарнику Deno
+    let deno_path = app_handle
+        .path()
+        .resolve("binaries/deno", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| format!("Не удалось найти Deno: {}", e))?;
+
+    // Формируем аргумент с полным путем
+    let deno_arg = format!("deno:{}", deno_path.display());
+
+    Ok(vec![
+        "--js-runtimes".to_string(), deno_arg,
+        "--remote-components".to_string(), "ejs:github".to_string(),
+        "--extractor-args".to_string(), "youtube:player_client=web".to_string(),
+    ])
 }
 
 async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -49,7 +58,7 @@ async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::A
     let output_template = format!("{}/%(title)s.%(ext)s", "/tmp"); // Заглушка, для --print не нужна, но на всякий случай
     let _ = output_template;
 
-    let mut args = get_common_args();
+    let mut args = get_common_args(&app_handle)?;
     args.extend(vec!["--flat-playlist", "--print", "id", &radio_url]);
 
     let output = get_ytdlp_command(app_handle)?
@@ -83,7 +92,7 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
     let url = format!("https://www.youtube.com/watch?v={}", video_id);
     
     // 1. Получаем название
-    let mut title_args = get_common_args();
+    let mut args = get_common_args(&app_handle)?;
     title_args.extend(vec!["--print", "title", &url]);
     
     let title_output = get_ytdlp_command(app_handle)?
@@ -96,7 +105,7 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
 
     // 2. Скачиваем аудио (исправлена ошибка с format!)
     let output_template = format!("{}/%(title)s.%(ext)s", temp_dir.display());
-    let mut dl_args = get_common_args();
+    let mut args = get_common_args(&app_handle)?;
     dl_args.extend(vec![
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--embed-metadata",
@@ -145,7 +154,7 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
     let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
 
     let output_template = format!("{}/%(title)s.%(ext)s", output_dir.display());
-    let mut args = get_common_args();
+    let mut args = get_common_args(&app_handle)?;
     args.extend(vec![
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--embed-metadata", "--embed-thumbnail",
@@ -224,7 +233,7 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     } else {
         let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
         
-        let mut id_args = get_common_args();
+        let mut args = get_common_args(&app_handle)?;
         id_args.extend(vec!["--flat-playlist", "--print", "id", &url]);
 
         let id_output = get_ytdlp_command(&app_handle)?

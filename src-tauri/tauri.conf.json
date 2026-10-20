@@ -27,6 +27,9 @@
       "binaries/yt-dlp",
       "binaries/deno"
     ],
+    "resources": [
+      "binaries/*"
+    ],
     "active": true,
     "targets": "all",
     "icon": [
