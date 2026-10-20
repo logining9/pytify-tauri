@@ -34,25 +34,38 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
     app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
 }
 
-// Теперь возвращает Result<Vec<String>, String> и требует app_handle
-fn get_common_args(_app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
-    // Получаем путь к текущему исполняемому файлу (pytify-tauri)
-    let exe_path = std::env::current_exe()
-        .map_err(|e| format!("Не удалось получить путь к exe: {}", e))?;
-    
-    // Берём папку, где лежит exe (в AppImage это usr/bin/)
-    let exe_dir = exe_path.parent()
-        .ok_or("Не удалось получить родительскую папку exe")?;
-    
-    // Формируем путь к Deno в той же папке
-    let deno_path = exe_dir.join("deno");
-    
-    // Проверяем, существует ли файл (для отладки)
-    if !deno_path.exists() {
-        return Err(format!("Deno не найден по пути: {}", deno_path.display()));
+// Умный поиск пути к Deno
+fn get_deno_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    // 1. Пытаемся получить путь через сам Tauri
+    if let Ok(cmd) = app_handle.shell().sidecar("deno") {
+        // Внутри tauri-plugin-shell путь хранится в поле program
+        // (это не публичное API, но работает для получения строки)
+        // Более надежный способ - использовать resolve, но с проверкой разных имен.
     }
 
-    let deno_arg = format!("deno:{}", deno_path.display());
+    // 2. Fallback: ищем рядом с исполняемым файлом
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = exe_path.parent().ok_or("Нет родительской папки")?;
+    
+    let possible_names = ["deno", "deno-x86_64-unknown-linux-gnu"];
+    for name in possible_names {
+        let candidate = exe_dir.join(name);
+        if candidate.exists() {
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+    }
+    
+    // 3. Крайний случай: ищем в PATH (для локальной разработки)
+    if let Ok(path) = which::which("deno") {
+        return Ok(path.to_string_lossy().to_string());
+    }
+
+    Err("Deno не найден. Убедитесь, что он добавлен в externalBin и находится в папке binaries.".to_string())
+}
+
+fn get_common_args(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
+    let deno_path = get_deno_path(app_handle)?;
+    let deno_arg = format!("deno:{}", deno_path);
 
     Ok(vec![
         "--js-runtimes".to_string(), deno_arg,
