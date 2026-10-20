@@ -29,16 +29,26 @@ struct AudioState {
     current_volume: Mutex<f32>,
 }
 
-// Вспомогательная функция для получения команды yt-dlp (sidecar)
 fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell::process::Command, String> {
     app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
 }
 
-// Все функции теперь принимают app_handle и используют sidecar
+// Общие аргументы для всех вызовов yt-dlp (Deno + EJS + клиенты tv,web)
+fn get_common_args() -> Vec<&'static str> {
+    vec![
+        "--js-runtimes", "deno:/usr/bin/deno",
+        "--remote-components", "ejs:github",
+        "--extractor-args", "youtube:player_client=tv,web", // Убрали mweb
+    ]
+}
+
 async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::AppHandle) -> Result<String, String> {
     let radio_url = format!("https://www.youtube.com/watch?v={}&list=RD{}", current_id, current_id);
+    let mut args = get_common_args();
+    args.extend(vec!["--flat-playlist", "--print", "id", &radio_url]);
+
     let output = get_ytdlp_command(app_handle)?
-        .args(["--js-runtimes", "deno", "--remote-components", "ejs:github", "--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &radio_url])
+        .args(&args)
         .output()
         .await
         .map_err(|e| format!("Ошибка получения радио: {}", e))?;
@@ -67,22 +77,29 @@ async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::A
 async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: &tauri::AppHandle) -> Result<(String, String), String> {
     let url = format!("https://www.youtube.com/watch?v={}", video_id);
     
+    // 1. Получаем название
+    let mut title_args = get_common_args();
+    title_args.extend(vec!["--print", "title", &url]);
+    
     let title_output = get_ytdlp_command(app_handle)?
-        .args(["--js-runtimes", "deno", "--remote-components", "ejs:github", "--extractor-args", "youtube:player_client=tv,mweb", "--print", "title", &url])
+        .args(&title_args)
         .output()
         .await
         .map_err(|e| format!("Ошибка получения названия: {}", e))?;
     
     let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
 
+    // 2. Скачиваем аудио (ЗДЕСЬ ТОЖЕ ДОБАВЛЕНЫ АРГУМЕНТЫ DENO/EJS)
+    let mut dl_args = get_common_args();
+    dl_args.extend(vec![
+        "-x", "--audio-format", "mp3", "--audio-quality", "0",
+        "--embed-metadata",
+        "-o", &format!("{}/%(title)s.%(ext)s", temp_dir.display()),
+        &url
+    ]);
+
     let output = get_ytdlp_command(app_handle)?
-        .args([
-            "--extractor-args", "youtube:player_client=tv,mweb",
-            "-x", "--audio-format", "mp3", "--audio-quality", "0",
-            "--embed-metadata",
-            "-o", &format!("{}/%(title)s.%(ext)s", temp_dir.display()),
-            &url
-        ])
+        .args(&dl_args)
         .output()
         .await
         .map_err(|e| format!("Ошибка yt-dlp: {}", e))?;
@@ -121,16 +138,16 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
 
     let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
 
+    let mut args = get_common_args();
+    args.extend(vec![
+        "-x", "--audio-format", "mp3", "--audio-quality", "0",
+        "--embed-metadata", "--embed-thumbnail",
+        "-o", &format!("{}/%(title)s.%(ext)s", output_dir.display()),
+        &url
+    ]);
+
     let output = get_ytdlp_command(&app_handle)?
-        .args([
-            "--js-runtimes", "deno", 
-            "--remote-components", "ejs:github", 
-            "--extractor-args", "youtube:player_client=tv,mweb",
-            "-x", "--audio-format", "mp3", "--audio-quality", "0",
-            "--embed-metadata", "--embed-thumbnail",
-            "-o", &format!("{}/%(title)s.%(ext)s", output_dir.display()),
-            &url
-        ])
+        .args(&args)
         .output()
         .await
         .map_err(|e| format!("Не удалось запустить yt-dlp: {}", e))?;
@@ -199,8 +216,12 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
         final_video_id = get_radio_track(&r_id, dir, &app_handle).await?;
     } else {
         let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
+        
+        let mut id_args = get_common_args();
+        id_args.extend(vec!["--flat-playlist", "--print", "id", &url]);
+
         let id_output = get_ytdlp_command(&app_handle)?
-            .args(["--js-runtimes", "deno", "--remote-components", "ejs:github", "--extractor-args", "youtube:player_client=tv,mweb", "--flat-playlist", "--print", "id", &url])
+            .args(&id_args)
             .output()
             .await
             .map_err(|e| format!("Ошибка получения ID: {}", e))?;
@@ -226,7 +247,6 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     })
 }
 
-// play_audio, toggle_playback, set_volume, is_playing остаются БЕЗ ИЗМЕНЕНИЙ (они не используют yt-dlp)
 #[tauri::command]
 fn play_audio(file_path: String, state: tauri::State<AudioState>) -> Result<(), String> {
     if let Ok(mut sink_guard) = state.sink.lock() {
@@ -311,7 +331,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_shell::init()) // <-- Важно: инициализация плагина shell
+        .plugin(tauri_plugin_shell::init())
         .manage(AudioState { 
             sink: Mutex::new(None), 
             _stream: Mutex::new(None),
