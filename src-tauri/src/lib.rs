@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
 use tauri_plugin_shell::ShellExt;
-use rand::RngExt; // <-- Возвращено для эквалайзера
+use rand::RngExt;
 
 #[derive(Serialize)]
 struct AudioInfo {
@@ -34,15 +34,13 @@ fn get_ytdlp_command(app_handle: &tauri::AppHandle) -> Result<tauri_plugin_shell
     app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())
 }
 
-// Замените старую get_common_args на эту:
+// Теперь возвращает Result<Vec<String>, String> и требует app_handle
 fn get_common_args(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
-    // Получаем путь к нашему sidecar-бинарнику Deno
     let deno_path = app_handle
         .path()
         .resolve("binaries/deno", tauri::path::BaseDirectory::Resource)
         .map_err(|e| format!("Не удалось найти Deno: {}", e))?;
 
-    // Формируем аргумент с полным путем
     let deno_arg = format!("deno:{}", deno_path.display());
 
     Ok(vec![
@@ -55,11 +53,10 @@ fn get_common_args(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String>
 async fn get_radio_track(current_id: &str, direction: i32, app_handle: &tauri::AppHandle) -> Result<String, String> {
     let radio_url = format!("https://www.youtube.com/watch?v={}&list=RD{}", current_id, current_id);
     
-    let output_template = format!("{}/%(title)s.%(ext)s", "/tmp"); // Заглушка, для --print не нужна, но на всякий случай
-    let _ = output_template;
-
-    let mut args = get_common_args(&app_handle)?;
-    args.extend(vec!["--flat-playlist", "--print", "id", &radio_url]);
+    let mut args = get_common_args(app_handle)?;
+    args.extend(vec![
+        "--flat-playlist".to_string(), "--print".to_string(), "id".to_string(), radio_url
+    ]);
 
     let output = get_ytdlp_command(app_handle)?
         .args(&args)
@@ -92,8 +89,8 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
     let url = format!("https://www.youtube.com/watch?v={}", video_id);
     
     // 1. Получаем название
-    let mut args = get_common_args(&app_handle)?;
-    title_args.extend(vec!["--print", "title", &url]);
+    let mut title_args = get_common_args(app_handle)?;
+    title_args.extend(vec!["--print".to_string(), "title".to_string(), url.clone()]);
     
     let title_output = get_ytdlp_command(app_handle)?
         .args(&title_args)
@@ -103,14 +100,14 @@ async fn download_by_id(video_id: &str, temp_dir: &std::path::Path, app_handle: 
     
     let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
 
-    // 2. Скачиваем аудио (исправлена ошибка с format!)
+    // 2. Скачиваем аудио
     let output_template = format!("{}/%(title)s.%(ext)s", temp_dir.display());
-    let mut args = get_common_args(&app_handle)?;
+    let mut dl_args = get_common_args(app_handle)?;
     dl_args.extend(vec![
-        "-x", "--audio-format", "mp3", "--audio-quality", "0",
-        "--embed-metadata",
-        "-o", &output_template, // Передаем ссылку на переменную
-        &url
+        "-x".to_string(), "--audio-format".to_string(), "mp3".to_string(), "--audio-quality".to_string(), "0".to_string(),
+        "--embed-metadata".to_string(),
+        "-o".to_string(), output_template,
+        url
     ]);
 
     let output = get_ytdlp_command(app_handle)?
@@ -156,10 +153,10 @@ async fn download_audio(query: String, app_handle: tauri::AppHandle) -> Result<S
     let output_template = format!("{}/%(title)s.%(ext)s", output_dir.display());
     let mut args = get_common_args(&app_handle)?;
     args.extend(vec![
-        "-x", "--audio-format", "mp3", "--audio-quality", "0",
-        "--embed-metadata", "--embed-thumbnail",
-        "-o", &output_template,
-        &url
+        "-x".to_string(), "--audio-format".to_string(), "mp3".to_string(), "--audio-quality".to_string(), "0".to_string(),
+        "--embed-metadata".to_string(), "--embed-thumbnail".to_string(),
+        "-o".to_string(), output_template,
+        url
     ]);
 
     let output = get_ytdlp_command(&app_handle)?
@@ -233,8 +230,10 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     } else {
         let url = if query.starts_with("http") { query } else { format!("ytsearch1:{}", query) };
         
-        let mut args = get_common_args(&app_handle)?;
-        id_args.extend(vec!["--flat-playlist", "--print", "id", &url]);
+        let mut id_args = get_common_args(&app_handle)?;
+        id_args.extend(vec![
+            "--flat-playlist".to_string(), "--print".to_string(), "id".to_string(), url
+        ]);
 
         let id_output = get_ytdlp_command(&app_handle)?
             .args(&id_args)
@@ -263,7 +262,6 @@ async fn stream_audio(query: String, radio_id: Option<String>, direction: Option
     })
 }
 
-// play_audio снова принимает app_handle для эквалайзера
 #[tauri::command]
 fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::State<AudioState>) -> Result<(), String> {
     if let Ok(mut sink_guard) = state.sink.lock() {
@@ -283,7 +281,6 @@ fn play_audio(file_path: String, app_handle: tauri::AppHandle, state: tauri::Sta
     sink.play();
     if let Ok(mut sink_guard) = state.sink.lock() { *sink_guard = Some(sink); }
 
-    // --- ВОЗВРАЩАЕМ ЭКВАЛАЙЗЕР ---
     let app_handle_clone = app_handle.clone();
     std::thread::spawn(move || {
         let mut rng = rand::rng();
